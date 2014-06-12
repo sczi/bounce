@@ -1,0 +1,456 @@
+.NOLIST
+#define equ .equ
+#define EQU .equ
+#define end .end
+#define END .end
+#include	"ti83plus.inc"			;General TI-83 Plus include file
+#include	"mirage.inc"			;MirageOS include file
+.LIST
+	.org	$9d93				;Origin (set back two to account for AsmPrgm)
+	.db	$BB,$6D				;Compiled AsmPrgm token
+	ret					;So TIOS wont run the program
+	.db	1				;Identifier as MirageOS program
+	.db	%00000001,%10000000		;15x15 button
+	.db	%00000110,%01100000
+	.db	%00011000,%00011000
+	.db	%00110100,%00101100
+	.db	%01101010,%01010110
+	.db	%01101110,%01110110
+	.db	%11000100,%00100011;'
+	.db	%11000000,%00000011;'
+	.db	%11000000,%00000011;'
+	.db	%01100000,%00000110
+	.db	%01100111,%11100110
+	.db	%00110001,%10001100
+	.db	%00011000,%00011000
+	.db	%00000110,%01100000
+	.db	%00000001,%10000000
+	.db	"Description",0			;Zero terminated description
+						;Program code starts here
+xpos = savesscreen;x of ball
+ypos = savesscreen+1;y of ball
+rise = savesscreen+2; rise of ball
+run = savesscreen+3; run of ball
+temp = savesscreen+4; temp var
+pxpos = savesscreen+5; xpos of the paddle
+txpos = savesscreen+6; temp x pos
+typos = savesscreen+7; temp y pos
+score = savesscreen+8; users score
+brickstart = savesscreen+9;48 bricks
+
+	ld a,35
+	ld (ypos),a
+	ld a,1
+	ld (xpos),a
+	ld (run),a
+	ld (pxpos),a
+	ld (rise),a
+	ld b,47
+	xor a
+	ld (score),a
+	ld hl,brickstart
+	ld (hl),a
+	ld de,0
+bricksreset:
+	ld hl,brickstart
+	ld e,b
+	add hl,de
+	ld (hl),a
+	djnz bricksreset
+start:
+;mainloop
+	bcall(_grbufclr)
+;display the ball
+	ld b,8
+	ld a,(ypos)
+	ld l,a
+	ld a,(xpos)
+	ld ix,ball
+	call isprite
+;b=sprite height
+;a=x
+;l=y
+;ix=sprite
+;display the paddle
+	ld b,8
+	ld a,50
+	ld l,a
+	ld a,(pxpos)
+	ld ix,paddle
+	call isprite
+
+        call ballbounce;update the ball
+	call paddlemove;update the paddle
+	call dispbricks;display the bricks
+	jp chkdead;check if dead
+alive:
+	bcall(_grbufcpy)
+	jr start
+dead:
+	bcall(_grbufclr)
+	bcall(_grbufcpy)
+	xor a
+	ld (currow),a
+	ld (curcol),a
+	ld hl,youwin
+	bcall(_puts)
+	bcall(_getkey)
+	jr dispscore
+lost:
+	bcall(_grbufclr)
+	bcall(_grbufcpy)
+	xor a
+	ld (currow),a
+	ld (curcol),a
+	ld hl,youlose
+	bcall(_puts)
+	bcall(_getkey)
+;	jr dispscore
+dispscore:
+	bcall(_grbufclr)
+	bcall(_grbufcpy)
+	xor a
+	ld (currow),a
+	ld (curcol),a
+	ld a,(score)
+	ld hl,0
+	ld l,a
+	bcall(_disphl)
+	bcall(_getkey)
+	ret
+chkdead:
+	ld a,(ypos)
+	cp 55
+	jr z,lost
+	ld a,1
+	ld (temp),a
+	ld b,47
+	ld hl,brickstart
+	ld a,(hl)
+	cp 0
+	jp z,alive
+	ld de,0
+brickscheckdead:
+	ld hl,brickstart
+	ld e,b
+	add hl,de
+	ld a,(hl)
+	cp 0
+	jp z,alive
+	djnz brickscheckdead
+	jp dead
+	
+ballbounce:
+;move the ball
+;add the rise to the yposition and the run to the xposition
+	ld a,(ypos)
+	ld hl,rise
+        add a,(hl)
+	ld (ypos),a
+	ld a,(xpos)
+	ld hl,run
+        add a,(hl)
+	ld (xpos),a
+
+;screen is 64x96 or 0-63/0-95
+;check to bounce off of walls
+;check if bounces off of bottom
+	ld a,(ypos)
+	cp 55;(63-8)
+	jr z,adjustvert
+	cp 0
+	jr z,cornercheck
+	ld a,(xpos)
+	cp 87;95-8
+	jr z,adjusthoriz
+	cp 0
+	jr z,adjusthoriz
+	bit 7,a
+	jr nz,adjusthoriz
+	sub 87
+	bit 7,a
+	jr z,adjusthoriz
+;check if it hits the bricks
+	ld a,(ypos)
+	cp 16
+	jp z,row4check
+	cp 12
+	jp z,row3check
+	cp 8
+	jp z,row2check
+	cp 4
+	jp z,row1check
+pastbrickcheck:
+;check if bounces off of paddle
+	ld a,(ypos)
+	cp 46
+	ret nz; return (it returns after this finishes) and if its not 46 can't intercept
+	ld b,16
+	ld hl,pxpos
+checkxforpaddle:
+	ld a,(xpos)
+	sub 8
+	add a,b
+	cp (hl)
+	jr z,adjustpaddle
+	djnz checkxforpaddle
+	ret
+adjustpaddle:;flip the rise to bounce off a paddle
+;also add 1 to run for every pixel to the right, subtract 1 for every pixel to the left
+
+	ld a,(rise)
+	neg
+	ld (rise),a
+;adjust run depending where it hits the paddle
+	ld a,(pxpos)
+;	add a,4
+	add a,2
+	ld hl,xpos
+	sub (hl)
+	sra a;divide by 4
+	sra a
+	neg
+;a is now between -2 and 2 will adjust the run
+	ld e,a
+	ld a,(run)
+	add a,e
+	ld (run),a
+	ret
+
+adjustvert:;flip the rise to bounce off a horizantal surface
+	ld a,(rise)
+	neg
+	ld (rise),a
+	ret
+adjusthoriz:;flip the run to bounce off a vertical surface
+	ld a,(run)
+	neg
+	ld (run),a
+	ret
+adjustcorner:;flip the run and the rise for a corner
+	call adjustvert
+	jr adjusthoriz
+
+cornercheck:
+	ld a,(xpos)
+	cp 0
+	jr z,adjustcorner
+	cp 87
+	jr z,adjustcorner
+	bit 7,a
+	jr nz,adjustcorner
+	sub 87
+	bit 7,a
+	jr z,adjustcorner
+	jr adjustvert;its not a corner so simply bounce off top wall
+row4check:
+	ld a,(xpos)
+	add a,4
+	sra a
+	sra a
+	sra a;divide x by 8
+	add a,36; 3 rows above+ the brick its on
+;check if that brick has been destroyed
+	ld hl,brickstart
+	ld d,0
+	ld e,a
+	add hl,de;brick that it might be hitting
+	ld a,(hl)
+	cp 1
+	jp z,pastbrickcheck; if its not 0, its dead so the ball won't bounce
+;set the brick as dead
+	ld a,1
+	ld (hl),a
+;increase the score
+	ld a,(score)
+	add a,1
+	ld (score),a
+;flip horizontally
+	jp adjustvert
+row3check:
+	ld a,(xpos)
+	add a,4
+	sra a
+	sra a
+	sra a;divide x by 8
+	add a,24; 2 rows above+ the brick its on
+;check if that brick has been destroyed
+	ld hl,brickstart
+	ld d,0
+	ld e,a
+	add hl,de;brick that it might be hitting
+	ld a,(hl)
+	cp 1
+	jp z,pastbrickcheck; if its not 0, its dead so the ball won't bounce
+;set the brick as dead
+	ld a,1
+	ld (hl),a
+;increase the score
+	ld a,(score)
+	add a,2
+	ld (score),a
+;flip horizontally
+	jp adjustvert
+row2check:
+	ld a,(xpos)
+	add a,4
+	sra a
+	sra a
+	sra a;divide x by 8
+	add a,12; 1 rows above+ the brick its on
+;check if that brick has been destroyed
+	ld hl,brickstart
+	ld d,0
+	ld e,a
+	add hl,de;brick that it might be hitting
+	ld a,(hl)
+	cp 1
+	jp z,pastbrickcheck; if its not 0, its dead so the ball won't bounce
+;set the brick as dead
+	ld a,1
+	ld (hl),a
+;increase the score
+	ld a,(score)
+	add a,3
+	ld (score),a
+;flip horizontally
+	jp adjustvert
+row1check:
+	ld a,(xpos)
+	add a,4
+	sra a
+	sra a
+	sra a;divide x by 8
+;check if that brick has been destroyed
+	ld hl,brickstart
+	ld d,0
+	ld e,a
+	add hl,de;brick that it might be hitting
+	ld a,(hl)
+	cp 1
+	jp z,pastbrickcheck; if its not 0, its dead so the ball won't bounce
+;set the brick as dead
+	ld a,1
+	ld (hl),a
+;increase the score
+	ld a,(score)
+	add a,4
+	ld (score),a
+;flip horizontally
+	jp adjustvert
+paddlemove:
+;get DI from keyboard
+;move the paddle if key
+;get the DI
+	ld a,$ff
+	out (1),a
+	ld a,$fe
+	out (1),a
+	in a,(1)
+	cp 253
+	jr z,moveleft;253, 11111101
+	cp 251
+	jr z,moveright;251, 11111011
+	ret
+moveleft:
+;move the paddle left
+	ld a,(pxpos)
+	cp 0
+	ret z
+	ld a,1
+	neg
+	ld hl,pxpos
+	add a,(hl)
+	ld (pxpos),a
+	ret
+
+moveright:
+;move the paddle right
+	ld a,(pxpos)
+	cp 88
+	ret z
+	ld a,1
+	ld hl,pxpos
+	add a,(hl)
+	ld (pxpos),a
+	ret
+
+dispbricks:
+dispstuff:		;4down 12long
+;for ionPutSprite a=x l=y ix=sprite location b=sprite height
+	ld b,4;loop four times for the four rows of blocks
+	xor a
+	ld (typos),a;start displaying bricks at the top of the screen
+	ld de,0;e will be counter for number of brick is on
+putbricks:
+	push bc	;b will be changed inside of the loop
+	ld b,12	;12 bricks to display
+	xor a
+	ld (txpos),a	;start displaying bricks at col zero
+rowloop:
+	push bc
+	ld hl,brickstart
+;	ld e,0;reset e
+	add hl,de
+	ld a,(hl)
+	cp 1
+	jp z,endloop
+	ld a,(typos)
+	ld l,a
+	ld a,(txpos)
+	ld b,4
+	ld ix,brick
+	push af
+	push bc
+	push de
+	push hl
+	push ix
+	call isprite
+	pop ix
+	pop hl
+	pop de
+	pop bc
+	pop af
+endloop:
+	ld a,(txpos)
+	add a,8
+	ld (txpos),a
+        inc e
+	pop bc
+	djnz rowloop
+	ld a,(typos)
+	add a,4
+	ld (typos),a
+	pop bc
+	djnz putbricks
+;	call ifastcopy
+	ret
+
+ball:
+ .db %00011000
+ .db %01100110
+ .db %01000010
+ .db %11000011
+ .db %11000011
+ .db %01000010
+ .db %01100110
+ .db %00011000
+paddle:
+ .db %00000000
+ .db %00000000
+ .db %00000000
+ .db %00000000
+ .db %11111111
+ .db %11111111
+ .db %11111111
+ .db %11111111
+brick:
+ .db %11111111
+ .db %11111111
+ .db %11111111
+ .db %11111111
+youwin:
+ .db "YOU WIN",0
+youlose:
+ .db "YOU LOSE",0
+END
